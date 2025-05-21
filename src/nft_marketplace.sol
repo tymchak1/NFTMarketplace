@@ -8,6 +8,10 @@ interface IERC721 {
 }
 
 contract NFTMarketplace {
+    event ItemListed(address indexed seller, address indexed nftContract, uint256 indexed tokenId, uint256 price);
+    event ListingCancelled(address indexed seller, address indexed nftContract, uint256 indexed tokenId);
+    event ItemSold(address indexed buyer, address indexed nftContract, uint256 indexed tokenId, uint256 price);
+
     struct Listing {
         address seller;
         uint256 price;
