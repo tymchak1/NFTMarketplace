@@ -6,6 +6,9 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
 contract NFTMarketplace is Pausable, Ownable {
+    
+    constructor() Ownable(msg.sender) {}
+
     event ItemListed(address indexed seller, address indexed nftContract, uint256 indexed tokenId, uint256 price);
     event PriceUpdated(address indexed seller, address indexed nftContract, uint256 indexed tokenId, uint256 price);
     event ListingCancelled(address indexed seller, address indexed nftContract, uint256 indexed tokenId);
@@ -36,8 +39,8 @@ contract NFTMarketplace is Pausable, Ownable {
         uint256 time;
     }
 
-    mapping(address => mapping(uint256 => Listing)) listings;
-    mapping(address => bool) allowedNFTs;
+    mapping(address => mapping(uint256 => Listing)) public listings;
+    mapping(address => bool) public allowedNFTs;
 
 
     function _isApproved(address nftContract, uint256 tokenId, address owner) internal view {
@@ -50,16 +53,15 @@ contract NFTMarketplace is Pausable, Ownable {
         );
     }
 
-    function _listingProcces(address nftContract, uint256 tokenId, uint256 price) internal {
+    function _listingProcess(address nftContract, uint256 tokenId, uint256 price) internal {
         _isApproved(nftContract, tokenId, msg.sender);
         require(price > 0, PriceCantBeZero());
 
         listings[nftContract][tokenId] = Listing(msg.sender, price, block.timestamp);
     }
 
-    function getListing(address nftContract, uint256 tokenId) external view returns(address seller, uint256 price) {
-        Listing memory listing = listings[nftContract][tokenId];
-        return (listing.seller, listing.price);
+    function getListing(address nft, uint256 tokenId) external view returns (Listing memory) {
+    return listings[nft][tokenId];
     }
 
     function setFeeRate(uint256 _feeRate) external onlyOwner {
@@ -85,17 +87,19 @@ contract NFTMarketplace is Pausable, Ownable {
     }
 
     function listItem(address nftContract, uint256 tokenId, uint256 price) external whenNotPaused {
-        Listing memory existing = listings[nftContract][tokenId];
+        Listing memory listedItem = listings[nftContract][tokenId];
         // якщо seller НЕ address(0), то лістинг вже існує
-        require(existing.seller == address(0), AlreadyListed(nftContract, tokenId));
-        _listingProcces(nftContract, tokenId, price);
+        require(listedItem.seller == address(0), AlreadyListed(nftContract, tokenId));
+        _listingProcess(nftContract, tokenId, price);
 
 
         emit ItemListed(msg.sender, nftContract, tokenId, price);
     }
 
     function updateListingPrice(address nftContract, uint256 tokenId, uint256 newPrice) external whenNotPaused {
-        _listingProcces(nftContract, tokenId, newPrice);
+        Listing memory listedItem = listings[nftContract][tokenId];
+        require(listedItem.seller != address(0), NotListed(nftContract, tokenId));
+        _listingProcess(nftContract, tokenId, newPrice);
 
         emit PriceUpdated(msg.sender, nftContract, tokenId, newPrice);
     }
@@ -122,7 +126,8 @@ contract NFTMarketplace is Pausable, Ownable {
         uint256 sellerEarnings = item.price - mpRevenue;
 
         token.safeTransferFrom(item.seller, msg.sender, tokenId);
-        payable(item.seller).transfer(sellerEarnings);
+        (bool success, ) = payable(item.seller).call{value: sellerEarnings}("");
+        require(success, "Transfer failed");
         totalFees += mpRevenue;
 
         delete listings[nftContract][tokenId];
