@@ -2,10 +2,10 @@
 pragma solidity ^0.8.27;
 
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
-contract NFTMarketplace is Pausable {
+contract NFTMarketplace is Pausable, Ownable {
     event ItemListed(address indexed seller, address indexed nftContract, uint256 indexed tokenId, uint256 price);
     event PriceUpdated(address indexed seller, address indexed nftContract, uint256 indexed tokenId, uint256 price);
     event ListingCancelled(address indexed seller, address indexed nftContract, uint256 indexed tokenId);
@@ -13,16 +13,19 @@ contract NFTMarketplace is Pausable {
     event RevenueWithdrawn(address indexed recepient, uint256 indexed amount);
 
     uint256 public totalFees;
-    address public owner;
     uint256 public feeRate;
 
-    constructor() {
-        owner = msg.sender;
-    }
-
+    error NotAnOwner();
+    error NotListed(address nftContract, uint256 tokenId);
+    error PriceCantBeZero();
+    error NotApproved();
+    error NFTNotAllowed();
+    error WithdrawFailed();
+    error InsufficientPayment();
+    error FeeTooHigh();
 
     modifier onlyAllowedNFTs(address nftContract) {
-        require(allowedNFTs[nftContract] == true, "NFT not allowed");
+        require(allowedNFTs[nftContract], NFTNotAllowed());
         _;
     }
 
@@ -30,36 +33,35 @@ contract NFTMarketplace is Pausable {
         address seller;
         uint256 price;
     }
-        // nftContract => tokenId => Listing(seller, price)
-    mapping(address => mapping(uint256 => Listing)) listings;
+
+    mapping(address => mapping(uint256)) listings;
     mapping(address => bool) allowedNFTs;
 
     function _isApproved(address nftContract, uint256 tokenId, address owner) internal view {
         IERC721 token = IERC721(nftContract);
-
-        require (token.ownerOf(tokenId) == owner, "Not an owner"); // owner check
-        require (
+        require(token.ownerOf(tokenId) == owner, NotAnOwner());
+        require(
             token.getApproved(tokenId) == address(this) ||
             token.isApprovedForAll(owner, address(this)),
-            "Marketplace not approved"
+            NotApproved()
         );
     }
 
     function getListing(address nftContract, uint256 tokenId) external view returns(address seller, uint256 price) {
         Listing memory listing = listings[nftContract][tokenId];
-        return(listing.seller, listing.price);
+        return (listing.seller, listing.price);
     }
 
     function setFeeRate(uint256 _feeRate) external onlyOwner {
-        require(_feeRate < 1000, "Fee is too high"); // Макс 99.9%
+        require(_feeRate < 1000, FeeTooHigh());
         feeRate = _feeRate;
     }
 
     function withdraw(address to, uint256 amount) external onlyOwner {
         require(amount <= totalFees, "Not enough funds");
 
-        (bool success, ) = payable(to).call{value : amount}("");
-        require(success, "Withdraw failed");
+        (bool success, ) = payable(to).call{value: amount}("");
+        require(success, WithdrawFailed());
 
         emit RevenueWithdrawn(to, amount);
     }
@@ -74,8 +76,8 @@ contract NFTMarketplace is Pausable {
 
     function listItem(address nftContract, uint256 tokenId, uint256 price) external whenNotPaused {
         _isApproved(nftContract, tokenId, msg.sender);
-        require(price > 0, "Price must be greater than zero");
-        
+        require(price > 0, PriceCantBeZero());
+
         listings[nftContract][tokenId] = Listing(msg.sender, price);
 
         emit ItemListed(msg.sender, nftContract, tokenId, price);
@@ -83,8 +85,7 @@ contract NFTMarketplace is Pausable {
 
     function updateListingPrice(address nftContract, uint256 tokenId, uint256 newPrice) external whenNotPaused {
         _isApproved(nftContract, tokenId, msg.sender);
-
-        require(newPrice > 0, "Price must be greater than zero");
+        require(newPrice > 0, PriceCantBeZero());
 
         listings[nftContract][tokenId] = Listing(msg.sender, newPrice);
         emit PriceUpdated(msg.sender, nftContract, tokenId, newPrice);
@@ -92,33 +93,27 @@ contract NFTMarketplace is Pausable {
 
     function cancelListing(address nftContract, uint256 tokenId) external whenNotPaused {
         Listing memory listedItem = listings[nftContract][tokenId];
-        require(listedItem.seller != address(0), "Not listed");
-        require(listedItem.seller == msg.sender, "Not an owner");
+        require(listedItem.seller != address(0), NotListed(nftContract, tokenId));
+        require(listedItem.seller == msg.sender, NotAnOwner());
 
         delete listings[nftContract][tokenId];
-
         emit ListingCancelled(msg.sender, nftContract, tokenId);
     }
 
     function buyItem(address nftContract, uint256 tokenId) external payable whenNotPaused {
-        uint256 mpRevenue;
-        uint256 sellerEarnings;
-
         Listing memory item = listings[nftContract][tokenId];
-        require(item.price > 0, "Not listed");
-        require(msg.value == item.price, "Insufficient payment");
+        require(item.price > 0, NotListed(nftContract, tokenId));
+        require(msg.value == item.price, InsufficientPayment());
 
         IERC721 token = IERC721(nftContract);
-
-        require(token.ownerOf(tokenId) == item.seller, "Seller is no longer an owner");
+        require(token.ownerOf(tokenId) == item.seller, NotAnOwner());
         _isApproved(nftContract, tokenId, item.seller);
-        
-        mpRevenue = (item.price * feeRate) / 1000;
-        sellerEarnings = item.price - mpRevenue;
+
+        uint256 mpRevenue = (item.price * feeRate) / 1000;
+        uint256 sellerEarnings = item.price - mpRevenue;
 
         token.safeTransferFrom(item.seller, msg.sender, tokenId);
         payable(item.seller).transfer(sellerEarnings);
-
         totalFees += mpRevenue;
 
         delete listings[nftContract][tokenId];
@@ -133,5 +128,4 @@ contract NFTMarketplace is Pausable {
     function unpause() external onlyOwner {
         _unpause();
     }
-
 }
