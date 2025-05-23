@@ -23,6 +23,7 @@ contract NFTMarketplace is Pausable, Ownable {
     error WithdrawFailed();
     error InsufficientPayment();
     error FeeTooHigh();
+    error AlreadyListed(address nftContract, uint256 tokenId);
 
     modifier onlyAllowedNFTs(address nftContract) {
         require(allowedNFTs[nftContract], NFTNotAllowed());
@@ -32,10 +33,12 @@ contract NFTMarketplace is Pausable, Ownable {
     struct Listing {
         address seller;
         uint256 price;
+        uint256 time;
     }
 
-    mapping(address => mapping(uint256)) listings;
+    mapping(address => mapping(uint256 => Listing)) listings;
     mapping(address => bool) allowedNFTs;
+
 
     function _isApproved(address nftContract, uint256 tokenId, address owner) internal view {
         IERC721 token = IERC721(nftContract);
@@ -45,6 +48,13 @@ contract NFTMarketplace is Pausable, Ownable {
             token.isApprovedForAll(owner, address(this)),
             NotApproved()
         );
+    }
+
+    function _listingProcces(address nftContract, uint256 tokenId, uint256 price) internal {
+        _isApproved(nftContract, tokenId, msg.sender);
+        require(price > 0, PriceCantBeZero());
+
+        listings[nftContract][tokenId] = Listing(msg.sender, price, block.timestamp);
     }
 
     function getListing(address nftContract, uint256 tokenId) external view returns(address seller, uint256 price) {
@@ -75,19 +85,18 @@ contract NFTMarketplace is Pausable, Ownable {
     }
 
     function listItem(address nftContract, uint256 tokenId, uint256 price) external whenNotPaused {
-        _isApproved(nftContract, tokenId, msg.sender);
-        require(price > 0, PriceCantBeZero());
+        Listing memory existing = listings[nftContract][tokenId];
+        // якщо seller НЕ address(0), то лістинг вже існує
+        require(existing.seller == address(0), AlreadyListed(nftContract, tokenId));
+        _listingProcces(nftContract, tokenId, price);
 
-        listings[nftContract][tokenId] = Listing(msg.sender, price);
 
         emit ItemListed(msg.sender, nftContract, tokenId, price);
     }
 
     function updateListingPrice(address nftContract, uint256 tokenId, uint256 newPrice) external whenNotPaused {
-        _isApproved(nftContract, tokenId, msg.sender);
-        require(newPrice > 0, PriceCantBeZero());
+        _listingProcces(nftContract, tokenId, newPrice);
 
-        listings[nftContract][tokenId] = Listing(msg.sender, newPrice);
         emit PriceUpdated(msg.sender, nftContract, tokenId, newPrice);
     }
 
