@@ -27,6 +27,7 @@ contract NFTMarketplace is Pausable, Ownable {
     error InsufficientPayment();
     error FeeTooHigh();
     error AlreadyListed(address nftContract, uint256 tokenId);
+    error TransferFailed();
 
     modifier onlyAllowedNFTs(address nftContract) {
         require(allowedNFTs[nftContract], NFTNotAllowed());
@@ -115,11 +116,18 @@ contract NFTMarketplace is Pausable, Ownable {
 
     function buyItem(address nftContract, uint256 tokenId) external payable whenNotPaused {
         Listing memory item = listings[nftContract][tokenId];
-        require(item.price > 0, NotListed(nftContract, tokenId));
-        require(msg.value == item.price, InsufficientPayment());
+        if (item.price == 0) {
+            revert NotListed(nftContract, tokenId);
+        }
+        
+        if (msg.value != item.price) {
+            revert InsufficientPayment();
+        }
 
         IERC721 token = IERC721(nftContract);
-        require(token.ownerOf(tokenId) == item.seller, NotAnOwner());
+        if (token.ownerOf(tokenId) != item.seller) {
+            revert NotAnOwner();
+        }
         _isApproved(nftContract, tokenId, item.seller);
 
         uint256 mpRevenue = (item.price * feeRate) / 1000;
@@ -127,7 +135,10 @@ contract NFTMarketplace is Pausable, Ownable {
 
         token.safeTransferFrom(item.seller, msg.sender, tokenId);
         (bool success, ) = payable(item.seller).call{value: sellerEarnings}("");
-        require(success, "Transfer failed");
+        if (!success) {
+            revert TransferFailed();
+        }
+        
         totalFees += mpRevenue;
 
         delete listings[nftContract][tokenId];
