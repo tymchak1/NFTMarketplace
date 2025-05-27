@@ -51,10 +51,13 @@ contract NFTMarketplaceTest is Test {
 
         marketplace = new NFTMarketplace();
         testNFT = new TestNFT(address(this));
+
+        vm.deal(buyer, 10 ether);
+        vm.deal(seller, 10 ether);
     }
 
 
-    function testListItemSuccess() external {
+    function test_ListItemSuccess() external {
         address user = vm.addr(1);
         uint256 tokenId = testNFT.safeMint(user);
 
@@ -72,12 +75,6 @@ contract NFTMarketplaceTest is Test {
         NFTMarketplace.Listing memory listing = marketplace.getListing(address(testNFT), tokenId);
         assertEq(listing.seller, user);
         assertEq(listing.price, price);
-    }
-
-    function test_RevertIfNotListed() external {
-        vm.prank(buyer);
-        vm.expectRevert(NFTMarketplace.NotListed.selector);
-        marketplace.buyItem{value: 1 ether}(address(testNFT), 1);
     }
 
     function test_RevertIfInsufficientPayment() external {
@@ -133,4 +130,108 @@ contract NFTMarketplaceTest is Test {
         marketplace.buyItem{value : price}(address(testNFT), tokenId);
     }
 
+    function test_BuyItemSuccessful() external {
+        uint256 tokenId = testNFT.safeMint(seller);
+
+        vm.prank(seller);
+        testNFT.approve(address(marketplace), tokenId);
+
+        uint256 price = 1 ether;
+        vm.prank(seller);
+        marketplace.listItem(address(testNFT), tokenId, price);
+
+        vm.deal(buyer, 2 ether);
+        vm.prank(buyer);
+        marketplace.buyItem{value: price}(address(testNFT), tokenId);
+
+        assertEq(testNFT.ownerOf(tokenId), buyer);
+    }
+
+    function test_RevertIfMarketplaceNotApproved() external {
+        uint256 tokenId = testNFT.safeMint(seller);
+        
+        uint256 price = 1 ether;
+        vm.prank(seller);
+        vm.expectRevert(NFTMarketplace.NotApproved.selector);  // Перемістіть expectRevert сюди
+        marketplace.listItem(address(testNFT), tokenId, price);  // Помилка буде тут, а не в buyItem
+    }
+
+    function test_RevertIfNotListed() external {
+        vm.prank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(
+            NFTMarketplace.NotListed.selector,
+            address(testNFT),
+            1));
+        marketplace.buyItem{value: 1 ether}(address(testNFT), 1);
+    }
+
+    function test_RevertIfInvalidListing() external {
+        uint256 tokenId = testNFT.safeMint(seller);
+
+        vm.prank(buyer);
+        vm.expectRevert(abi.encodeWithSelector(
+            NFTMarketplace.NotListed.selector,
+            address(testNFT),
+            tokenId));
+        marketplace.buyItem{value: 1 ether}(address(testNFT), tokenId);
+    }
+
+    function test_RevertIfAlreadyListed() external {
+        uint256 tokenId = testNFT.safeMint(seller);
+
+        vm.prank(seller);
+        testNFT.approve(address(marketplace), tokenId);
+
+        uint256 price = 1 ether;    
+        vm.prank(seller);
+        marketplace.listItem(address(testNFT), tokenId, price);
+
+        vm.prank(seller);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                NFTMarketplace.AlreadyListed.selector,
+                address(testNFT),
+                tokenId
+            )
+        );
+        marketplace.listItem(address(testNFT), tokenId, price);
+        }
+
+        function test_RevertIfCancelNotListed() external {
+            uint256 tokenId = 1;
+            vm.prank(seller);
+            vm.expectRevert(
+                abi.encodeWithSelector(
+                    NFTMarketplace.NotListed.selector,
+                    address(testNFT),
+                    tokenId
+                )
+            );
+            marketplace.cancelListing(address(testNFT), tokenId);
+        }
+
+        function test_RevertIfCancelNotSeller() external {
+            uint256 tokenId = testNFT.safeMint(seller);
+
+            vm.prank(seller);
+            testNFT.approve(address(marketplace), tokenId);
+
+            uint256 price = 1 ether;    
+            vm.prank(seller);
+            marketplace.listItem(address(testNFT), tokenId, price);
+
+            vm.prank(buyer);
+            vm.expectRevert(NFTMarketplace.NotAnOwner.selector);
+            marketplace.cancelListing(address(testNFT), tokenId);
+        }
+
+        function test_RevertIfFeeTooHigh() external {
+            vm.expectRevert(NFTMarketplace.FeeTooHigh.selector);
+            marketplace.setFeeRate(1000); // 999 is max
+        }
+
+        function test_RevertIfWithdrawTooMuch() external {
+            vm.expectRevert("Not enough funds");
+            marketplace.withdraw(address(this), 1 ether);
+        }
 }

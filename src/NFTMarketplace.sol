@@ -47,11 +47,12 @@ contract NFTMarketplace is Pausable, Ownable {
     function _isApproved(address nftContract, uint256 tokenId, address owner) internal view {
         IERC721 token = IERC721(nftContract);
         require(token.ownerOf(tokenId) == owner, NotAnOwner());
-        require(
-            token.getApproved(tokenId) == address(this) ||
-            token.isApprovedForAll(owner, address(this)),
-            NotApproved()
-        );
+        if (
+            token.getApproved(tokenId) != address(this) &&
+            !token.isApprovedForAll(owner, address(this))
+        ) {
+            revert NotApproved();
+        }
     }
 
     function _listingProcess(address nftContract, uint256 tokenId, uint256 price) internal {
@@ -62,7 +63,7 @@ contract NFTMarketplace is Pausable, Ownable {
     }
 
     function getListing(address nft, uint256 tokenId) external view returns (Listing memory) {
-    return listings[nft][tokenId];
+        return listings[nft][tokenId];
     }
 
     function setFeeRate(uint256 _feeRate) external onlyOwner {
